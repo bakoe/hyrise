@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "operators/table_scan/abstract_table_scan_impl.hpp"
 #include "storage/reference_segment.hpp"
 #include "storage/segment_accessor.hpp"
 #include "storage/segment_iterate.hpp"
@@ -14,16 +15,11 @@
 
 namespace opossum {
 
-Sort::Sort(const std::shared_ptr<const AbstractOperator>& in, const ColumnID column_id, const OrderByMode order_by_mode,
+Sort::Sort(const std::shared_ptr<const AbstractOperator>& in, const std::vector<OrderByDefinition> order_by_definitions,
            const size_t output_chunk_size)
     : AbstractReadOnlyOperator(OperatorType::Sort, in),
-      _column_id(column_id),
-      _order_by_mode(order_by_mode),
+      _order_by_definitions(order_by_definitions),
       _output_chunk_size(output_chunk_size) {}
-
-ColumnID Sort::column_id() const { return _column_id; }
-
-OrderByMode Sort::order_by_mode() const { return _order_by_mode; }
 
 const std::string& Sort::name() const {
   static const auto name = std::string{"Sort"};
@@ -33,15 +29,38 @@ const std::string& Sort::name() const {
 std::shared_ptr<AbstractOperator> Sort::_on_deep_copy(
     const std::shared_ptr<AbstractOperator>& copied_input_left,
     const std::shared_ptr<AbstractOperator>& copied_input_right) const {
-  return std::make_shared<Sort>(copied_input_left, _column_id, _order_by_mode, _output_chunk_size);
+  return std::make_shared<Sort>(copied_input_left, _order_by_definitions, _output_chunk_size);
 }
 
 void Sort::_on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) {}
 
 std::shared_ptr<const Table> Sort::_on_execute() {
+  std::vector<OrderByDefinitionWithDataType> order_by_definitions_with_data_types;
+  order_by_definitions_with_data_types.reserve(_order_by_definitions.size());
+  for (const auto& order_by_definition : _order_by_definitions) {
+    const DataType column_data_type = input_table_left()->column_data_type(order_by_definition.column_id;
+
+    /*
+    resolve_data_type(column_data_type, [&](auto type) {
+      using ColumnDataType = typename decltype(type)::type;
+      OrderByDefinitionWithDataType<ColumnDataType> order_by_definitions_with_data_type;
+      order_by_definitions_with_data_type.column_id = order_by_definition.column_id;
+      order_by_definitions_with_data_type.order_by_mode = order_by_definition.order_by_mode;
+      order_by_definitions_with_data_types.emplace_back(order_by_definitions_with_data_type);
+    }
+   */
+    OrderByDefinitionWithDataType order_by_definitions_with_data_type;
+    order_by_definitions_with_data_type.column_id = order_by_definition.column_id;
+    order_by_definitions_with_data_type.order_by_mode = order_by_definition.order_by_mode;
+    order_by_definitions_with_data_type.data_type = column_data_type;
+    order_by_definitions_with_data_types.emplace_back(order_by_definitions_with_data_type);
+  }
+  /*
   _impl = make_unique_by_data_type<AbstractReadOnlyOperatorImpl, SortImpl>(
-      input_table_left()->column_data_type(_column_id), input_table_left(), _column_id, _order_by_mode,
-      _output_chunk_size);
+      input_table_left(), order_by_definitions_with_data_types, _output_chunk_size);
+      */
+  _impl = std::make_unique<SortImpl>(input_table_left(), order_by_definitions_with_data_types, _output_chunk_size);
+
   return _impl->_on_execute();
 }
 
@@ -160,21 +179,21 @@ class Sort::SortImplMaterializeOutput {
   const std::shared_ptr<std::vector<std::pair<RowID, SortColumnType>>> _row_id_value_vector;
 };
 
+// TODO(anyone): Adjust this comment or refactor accordingly
 // we need to use the impl pattern because the scan operator of the sort depends on the type of the column
-template <typename SortColumnType>
-class Sort::SortImpl : public AbstractReadOnlyOperatorImpl {
+class Sort::SortImpl {
  public:
-  using RowIDValuePair = std::pair<RowID, SortColumnType>;
+  using RowIDValuesPair = std::pair<RowID, std::vector<AllTypeVariant>>;
 
-  SortImpl(const std::shared_ptr<const Table>& table_in, const ColumnID column_id,
-           const OrderByMode order_by_mode = OrderByMode::Ascending, const size_t output_chunk_size = 0)
+  SortImpl(const std::shared_ptr<const Table>& table_in,
+           const std::vector<OrderByDefinitionWithDataType> order_by_definitions_with_data_types,
+           const size_t output_chunk_size = 0)
       : _table_in(table_in),
-        _column_id(column_id),
-        _order_by_mode(order_by_mode),
+        _order_by_definitions_with_data_types(order_by_definitions_with_data_types),
         _output_chunk_size(output_chunk_size) {
     // initialize a structure which can be sorted by std::sort
-    _row_id_value_vector = std::make_shared<std::vector<RowIDValuePair>>();
-    _null_value_rows = std::make_shared<std::vector<RowIDValuePair>>();
+    _row_id_values_vector = std::make_shared<std::vector<RowIDValuesPair>>();
+    _null_values_rows = std::make_shared<std::vector<RowIDValuesPair>>();
   }
 
  protected:
@@ -216,25 +235,53 @@ class Sort::SortImpl : public AbstractReadOnlyOperatorImpl {
 
   // completely materializes the sort column to create a vector of RowID-Value pairs
   void _materialize_sort_column() {
-    auto& row_id_value_vector = *_row_id_value_vector;
-    row_id_value_vector.reserve(_table_in->row_count());
+    auto& row_id_values_vector = *_row_id_values_vector;
+    row_id_values_vector.resize(_table_in->row_count());
+    for (auto& row_id_values : row_id_values_vector) {
+      row_id_values.second = std::vector<AllTypeVariant>();
+      row_id_values.second.resize(_order_by_definitions_with_data_types.size());
+    }
 
-    auto& null_value_rows = *_null_value_rows;
+    auto& null_value_rows = *_null_values_rows;
+    null_value_rows.resize(_table_in->row_count());
+    for (auto& null_value_row : null_value_rows) {
+      null_value_row.second = std::vector<AllTypeVariant>();
+      null_value_row.second.resize(_order_by_definitions_with_data_types.size());
+    }
 
+    auto chunk_begin_row_idx = size_t{0};
     const auto chunk_count = _table_in->chunk_count();
     for (ChunkID chunk_id{0}; chunk_id < chunk_count; ++chunk_id) {
       const auto chunk = _table_in->get_chunk(chunk_id);
       Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
 
-      auto base_segment = chunk->get_segment(_column_id);
+      for (auto definition_id = ColumnID{0}; definition_id < _order_by_definitions_with_data_types.size();
+           definition_id++) {
+        const auto& definition = _order_by_definitions_with_data_types[definition_id];
+        auto base_segment = chunk->get_segment(definition.column_id);
 
-      segment_iterate<SortColumnType>(*base_segment, [&](const auto& position) {
-        if (position.is_null()) {
-          null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
-        } else {
-          row_id_value_vector.emplace_back(RowID{chunk_id, position.chunk_offset()}, position.value());
-        }
-      });
+        const DataType column_data_type = definition.data_type;
+        resolve_data_type(column_data_type, [&](auto type) {
+          using ColumnDataType = typename decltype(type)::type;
+          segment_iterate<ColumnDataType>(*base_segment, [&](const auto& position) {
+            if (position.is_null()) {
+              std::pair<RowID, std::vector<AllTypeVariant>> row =
+                  *null_value_rows[chunk_begin_row_idx + position.chunk_offset()];
+              row.second[definition_id] = ColumnDataType{};
+              // TODO Only set this once(?)
+              row.first = RowID{chunk_id, position.chunk_offset()};
+            } else {
+              std::pair<RowID, std::vector<AllTypeVariant>> row =
+                  *row_id_values_vector[chunk_begin_row_idx + position.chunk_offset()];
+              row.second[definition_id] = position.value();
+              // TODO Only set this once(?)
+              row.first = RowID{chunk_id, position.chunk_offset()};
+            }
+          });
+        });
+      }
+
+      chunk_begin_row_idx += chunk->size();
     }
   }
 
@@ -246,15 +293,12 @@ class Sort::SortImpl : public AbstractReadOnlyOperatorImpl {
   }
 
   const std::shared_ptr<const Table> _table_in;
-
-  // column to sort by
-  const ColumnID _column_id;
-  const OrderByMode _order_by_mode;
+  const std::vector<OrderByDefinitionWithDataType> _order_by_definitions_with_data_types;
   // chunk size of the materialized output
   const size_t _output_chunk_size;
 
-  std::shared_ptr<std::vector<RowIDValuePair>> _row_id_value_vector;
-  std::shared_ptr<std::vector<RowIDValuePair>> _null_value_rows;
+  std::shared_ptr<std::vector<RowIDValuesPair>> _row_id_values_vector;
+  std::shared_ptr<std::vector<RowIDValuesPair>> _null_values_rows;
 };
 
 }  // namespace opossum
