@@ -1,6 +1,16 @@
 #pragma once
 
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "abstract_read_only_operator.hpp"
+#include "resolve_type.hpp"
+#include "storage/create_iterable_from_segment.hpp"
+#include "types.hpp"
 
 namespace opossum {
 
@@ -23,12 +33,21 @@ class SortNew : public AbstractReadOnlyOperator {
   SortNew(const std::shared_ptr<const AbstractOperator>& in, const std::vector<SortColumnDefinition>& sort_definitions,
           const size_t output_chunk_size = Chunk::DEFAULT_SIZE);
 
+  SortNew(const std::shared_ptr<const AbstractOperator>& in, const ColumnID column_id,
+          const OrderByMode order_by_mode = OrderByMode::Ascending,
+          const size_t output_chunk_size = Chunk::DEFAULT_SIZE);
+
   const std::vector<SortColumnDefinition>& sort_definitions() const;
 
   const std::string& name() const override;
 
  protected:
   std::shared_ptr<const Table> _on_execute() override;
+  void _on_cleanup() override;
+  std::shared_ptr<AbstractOperator> _on_deep_copy(
+      const std::shared_ptr<AbstractOperator>& copied_input_left,
+      const std::shared_ptr<AbstractOperator>& copied_input_right) const override;
+  void _on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) override;
 
   // TODO(anyone): Enable and implement the following for sort definition validation (see abstract_aggregate_operator)
   // void _validate_sort_definitions() const;
