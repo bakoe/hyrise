@@ -21,6 +21,7 @@ struct SortColumnDefinition final {
   SortColumnDefinition(const ColumnID& column, const OrderByMode order_by_mode = OrderByMode::Ascending)
       : column(column), order_by_mode(order_by_mode) {}
 
+  // TODO(anyone): Maybe rename here and in AggregateColumnDefinition to column_id
   const ColumnID column;
   const OrderByMode order_by_mode;
 };
@@ -48,6 +49,9 @@ class SortNew : public AbstractReadOnlyOperator {
       const std::shared_ptr<AbstractOperator>& copied_input_left,
       const std::shared_ptr<AbstractOperator>& copied_input_right) const override;
   void _on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) override;
+
+  // TODO(anyone): Copied from Table::get_rows; maybe move into Table implementation or factor out util/helper function
+  std::vector<std::vector<AllTypeVariant>> _get_filtered_rows();
 
   // TODO(anyone): Enable and implement the following for sort definition validation (see abstract_aggregate_operator)
   // void _validate_sort_definitions() const;
