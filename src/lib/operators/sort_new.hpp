@@ -51,7 +51,10 @@ class SortNew : public AbstractReadOnlyOperator {
   void _on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) override;
 
   // TODO(anyone): Copied from Table::get_rows; maybe move into Table implementation or factor out util/helper function
-  std::vector<std::vector<AllTypeVariant>> _get_filtered_rows();
+  std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> _get_filtered_rows();
+
+  template <typename ValueType>
+  int8_t _compare(ValueType value_a, ValueType value_b);
 
   // TODO(anyone): Enable and implement the following for sort definition validation (see abstract_aggregate_operator)
   // void _validate_sort_definitions() const;
@@ -59,6 +62,8 @@ class SortNew : public AbstractReadOnlyOperator {
   // TODO(anyone): Add and implement other "boilerplate" methods like _on_cleanup, _on_deep_copy etc.
 
   const std::vector<SortColumnDefinition> _sort_definitions;
+  std::vector<DataType> _sort_definition_data_types;
+
   const size_t _output_chunk_size;
 };
 
