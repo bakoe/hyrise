@@ -77,6 +77,8 @@ std::shared_ptr<const Table> SortNew::_on_execute() {
                      return true;
                    });
 
+  // TODO(anyone): Materialize output, similar to Sort::SortImplMaterializeOutput
+
   return _input_left->get_output();
 }
 
