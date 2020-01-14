@@ -37,45 +37,72 @@ void SortNew::_on_set_parameters(const std::unordered_map<ParameterID, AllTypeVa
 std::shared_ptr<const Table> SortNew::_on_execute() {
   std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> filtered_rows = _get_filtered_rows();
 
-  std::stable_sort(filtered_rows.begin(), filtered_rows.end(),
-                   [&](const std::pair<RowID, std::vector<AllTypeVariant>>& row_a,
-                       const std::pair<RowID, std::vector<AllTypeVariant>>& row_b) {
-                     for (auto column_id = ColumnID{0}; column_id < _sort_definitions.size(); ++column_id) {
-                       auto sort_definition = _sort_definitions[column_id];
-                       DataType data_type = _sort_definition_data_types[column_id];
-                       OrderByMode order_by_mode = sort_definition.order_by_mode;
-                       AllTypeVariant value_a = row_a.second[column_id];
-                       AllTypeVariant value_b = row_b.second[column_id];
-                       Assert((order_by_mode == OrderByMode::Ascending || order_by_mode == OrderByMode::Descending),
-                              "Currently unsupported order_by_mode");
+  std::stable_sort(
+      filtered_rows.begin(), filtered_rows.end(),
+      [&](const std::pair<RowID, std::vector<AllTypeVariant>>& row_a,
+          const std::pair<RowID, std::vector<AllTypeVariant>>& row_b) {
+        for (auto column_id = ColumnID{0}; column_id < _sort_definitions.size(); ++column_id) {
+          auto sort_definition = _sort_definitions[column_id];
+          DataType data_type = _sort_definition_data_types[column_id];
+          OrderByMode order_by_mode = sort_definition.order_by_mode;
+          AllTypeVariant value_a = row_a.second[column_id];
+          AllTypeVariant value_b = row_b.second[column_id];
 
-                       std::optional<bool> result;
-                       resolve_data_type(data_type, [&](auto type) {
-                         using ValueType = typename decltype(type)::type;
+          bool value_a_is_null = variant_is_null(value_a);
+          bool value_b_is_null = variant_is_null(value_b);
 
-                         int8_t comparison_result = SortNew::_compare<ValueType>(boost::get<ValueType>(value_a),
-                                                                                 boost::get<ValueType>(value_b));
+          if (value_a_is_null && value_b_is_null) {
+            // To ensure stable-ness, put value_a before value_b if both values are NULL
+            return true;
+          }
 
-                         if (comparison_result == 0) {
-                           return;
-                         }
+          if (order_by_mode == OrderByMode::Ascending || order_by_mode == OrderByMode::Descending) {
+            // Put the NULL element before the non-NULL element
+            if (value_a_is_null && !value_b_is_null) {
+              return true;
+            }
+            if (!value_a_is_null && value_b_is_null) {
+              return false;
+            }
+          }
 
-                         if (order_by_mode == OrderByMode::Ascending) {
-                           result = (comparison_result < 0);
-                           return;
-                         } else {
-                           result = (comparison_result > 0);
-                           return;
-                         }
-                       });
+          if (order_by_mode == OrderByMode::AscendingNullsLast || order_by_mode == OrderByMode::DescendingNullsLast) {
+            // Put the NULL element after the non-NULL element
+            if (value_a_is_null && !value_b_is_null) {
+              return false;
+            }
+            if (!value_a_is_null && value_b_is_null) {
+              return true;
+            }
+          }
 
-                       if (result.has_value()) {
-                         return result.value();
-                       }
-                     }
-                     // TODO(anyone): Return true or false depending on "last" order_by_mode to ensure stable-ness
-                     return true;
-                   });
+          std::optional<bool> result;
+          resolve_data_type(data_type, [&](auto type) {
+            using ValueType = typename decltype(type)::type;
+
+            int8_t comparison_result =
+                SortNew::_compare<ValueType>(boost::get<ValueType>(value_a), boost::get<ValueType>(value_b));
+
+            if (comparison_result == 0) {
+              return;
+            }
+
+            if (order_by_mode == OrderByMode::Ascending) {
+              result = (comparison_result < 0);
+              return;
+            } else {
+              result = (comparison_result > 0);
+              return;
+            }
+          });
+
+          if (result.has_value()) {
+            return result.value();
+          }
+        }
+        // If the values are equal, value_a is considered to be "before" value_b for stable-ness
+        return true;
+      });
 
   // TODO(anyone): Materialize output, similar to Sort::SortImplMaterializeOutput
   auto output = _get_materialized_output(filtered_rows);
@@ -221,8 +248,9 @@ std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> SortNew::_get_filtere
         rows[chunk_begin_row_idx + segment_position.chunk_offset()].first = row_id;
         if (!segment_position.is_null()) {
           rows[chunk_begin_row_idx + segment_position.chunk_offset()].second[column_id] = segment_position.value();
+        } else {
+          rows[chunk_begin_row_idx + segment_position.chunk_offset()].second[column_id] = NULL_VALUE;
         }
-        // TODO(anyone): Handle NULL values appropriately
       });
     }
 
