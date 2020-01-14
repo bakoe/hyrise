@@ -78,8 +78,9 @@ std::shared_ptr<const Table> SortNew::_on_execute() {
                    });
 
   // TODO(anyone): Materialize output, similar to Sort::SortImplMaterializeOutput
+  auto output = _get_materialized_output(filtered_rows);
 
-  return _input_left->get_output();
+  return output;
 }
 
 template <typename ValueType>
@@ -95,6 +96,104 @@ int8_t SortNew::_compare(ValueType value_a, ValueType value_b) {
 
 void SortNew::_on_cleanup() {
   // TODO(anyone): Implement, if necessary
+}
+
+std::shared_ptr<Table> SortNew::_get_materialized_output(
+    std::vector<std::pair<RowID, std::vector<AllTypeVariant>>>& sorted_rows) {
+  // First we create a new table as the output
+  auto output =
+      std::make_shared<Table>(_input_left->get_output()->column_definitions(), TableType::Data, _output_chunk_size);
+
+  // We have decided against duplicating MVCC data in https://github.com/hyrise/hyrise/issues/408
+
+  // After we created the output table and initialized the column structure, we can start adding values. Because the
+  // values are not ordered by input chunks anymore, we can't process them chunk by chunk. Instead the values are
+  // copied column by column for each output row. For each column in a row we visit the input segment with a reference
+  // to the output segment.
+  const auto row_count_out = sorted_rows.size();
+
+  // Ceiling of integer division
+  const auto div_ceil = [](auto x, auto y) { return (x + y - 1u) / y; };
+
+  const auto chunk_count_out = div_ceil(row_count_out, _output_chunk_size);
+
+  // Vector of segments for each chunk
+  std::vector<Segments> output_segments_by_chunk(chunk_count_out);
+
+  // Materialize segment-wise
+  for (ColumnID column_id{0u}; column_id < output->column_count(); ++column_id) {
+    const auto column_data_type = output->column_data_type(column_id);
+
+    resolve_data_type(column_data_type, [&](auto type) {
+      using ColumnDataType = typename decltype(type)::type;
+
+      auto chunk_it = output_segments_by_chunk.begin();
+      auto chunk_offset_out = 0u;
+
+      auto value_segment_value_vector = pmr_concurrent_vector<ColumnDataType>();
+      auto value_segment_null_vector = pmr_concurrent_vector<bool>();
+
+      value_segment_value_vector.reserve(row_count_out);
+      value_segment_null_vector.reserve(row_count_out);
+
+      auto segment_ptr_and_accessor_by_chunk_id =
+          std::unordered_map<ChunkID, std::pair<std::shared_ptr<const BaseSegment>,
+                                                std::shared_ptr<AbstractSegmentAccessor<ColumnDataType>>>>();
+      segment_ptr_and_accessor_by_chunk_id.reserve(row_count_out);
+
+      for (auto row_index = 0u; row_index < row_count_out; ++row_index) {
+        const auto [chunk_id, chunk_offset] = sorted_rows.at(row_index).first;
+
+        auto& segment_ptr_and_typed_ptr_pair = segment_ptr_and_accessor_by_chunk_id[chunk_id];
+        auto& base_segment = segment_ptr_and_typed_ptr_pair.first;
+        auto& accessor = segment_ptr_and_typed_ptr_pair.second;
+
+        if (!base_segment) {
+          base_segment = _input_left->get_output()->get_chunk(chunk_id)->get_segment(column_id);
+          accessor = create_segment_accessor<ColumnDataType>(base_segment);
+        }
+
+        // If the input segment is not a ReferenceSegment, we can take a fast(er) path
+        if (accessor) {
+          const auto typed_value = accessor->access(chunk_offset);
+          const auto is_null = !typed_value;
+          value_segment_value_vector.push_back(is_null ? ColumnDataType{} : typed_value.value());
+          value_segment_null_vector.push_back(is_null);
+        } else {
+          const auto value = (*base_segment)[chunk_offset];
+          const auto is_null = variant_is_null(value);
+          value_segment_value_vector.push_back(is_null ? ColumnDataType{} : boost::get<ColumnDataType>(value));
+          value_segment_null_vector.push_back(is_null);
+        }
+
+        ++chunk_offset_out;
+
+        // Check if value segment is full
+        if (chunk_offset_out >= _output_chunk_size) {
+          chunk_offset_out = 0u;
+          auto value_segment = std::make_shared<ValueSegment<ColumnDataType>>(std::move(value_segment_value_vector),
+                                                                              std::move(value_segment_null_vector));
+          chunk_it->push_back(value_segment);
+          value_segment_value_vector = pmr_concurrent_vector<ColumnDataType>();
+          value_segment_null_vector = pmr_concurrent_vector<bool>();
+          ++chunk_it;
+        }
+      }
+
+      // Last segment has not been added
+      if (chunk_offset_out > 0u) {
+        auto value_segment = std::make_shared<ValueSegment<ColumnDataType>>(std::move(value_segment_value_vector),
+                                                                            std::move(value_segment_null_vector));
+        chunk_it->push_back(value_segment);
+      }
+    });
+  }
+
+  for (auto& segments : output_segments_by_chunk) {
+    output->append_chunk(segments);
+  }
+
+  return output;
 }
 
 std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> SortNew::_get_filtered_rows() {

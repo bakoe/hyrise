@@ -53,6 +53,9 @@ class SortNew : public AbstractReadOnlyOperator {
   // TODO(anyone): Copied from Table::get_rows; maybe move into Table implementation or factor out util/helper function
   std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> _get_filtered_rows();
 
+  std::shared_ptr<Table> _get_materialized_output(
+      std::vector<std::pair<RowID, std::vector<AllTypeVariant>>>& sorted_rows);
+
   template <typename ValueType>
   int8_t _compare(ValueType value_a, ValueType value_b);
 
