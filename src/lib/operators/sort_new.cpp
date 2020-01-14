@@ -4,7 +4,7 @@
 namespace opossum {
 
 SortNew::SortNew(const std::shared_ptr<const AbstractOperator>& in,
-                 const std::vector<SortColumnDefinition>& sort_definitions, size_t output_chunk_size)
+                 const std::vector<SortColumnDefinition>& sort_definitions, const size_t output_chunk_size)
     : AbstractReadOnlyOperator(OperatorType::Sort, in),
       _sort_definitions(sort_definitions),
       _output_chunk_size(output_chunk_size) {
@@ -16,7 +16,7 @@ SortNew::SortNew(const std::shared_ptr<const AbstractOperator>& in,
 }
 
 SortNew::SortNew(const std::shared_ptr<const AbstractOperator>& in, const ColumnID column_id,
-                 const OrderByMode order_by_mode, size_t output_chunk_size)
+                 const OrderByMode order_by_mode, const size_t output_chunk_size)
     : SortNew::SortNew(in, {{column_id, order_by_mode}}, output_chunk_size){};
 
 const std::vector<SortColumnDefinition>& SortNew::sort_definitions() const { return _sort_definitions; }
