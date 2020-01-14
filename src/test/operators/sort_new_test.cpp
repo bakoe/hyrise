@@ -123,6 +123,7 @@ TEST_P(OperatorsSortNewTest, MultipleColumnSortIsStable) {
   std::vector<SortColumnDefinition> sort_definitions = {{ColumnID{1}, OrderByMode::Ascending},
                                                         {ColumnID{0}, OrderByMode::Ascending}};
   auto sort = std::make_shared<SortNew>(table_wrapper, sort_definitions, 2u);
+  sort->execute();
 
   EXPECT_TABLE_EQ_ORDERED(sort->get_output(), expected_result);
 }
@@ -136,6 +137,7 @@ TEST_P(OperatorsSortNewTest, MultipleColumnSortIsStableMixedOrder) {
   std::vector<SortColumnDefinition> sort_definitions = {{ColumnID{1}, OrderByMode::Descending},
                                                         {ColumnID{0}, OrderByMode::Ascending}};
   auto sort = std::make_shared<SortNew>(table_wrapper, sort_definitions, 2u);
+  sort->execute();
 
   EXPECT_TABLE_EQ_ORDERED(sort->get_output(), expected_result);
 }
