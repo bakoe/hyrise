@@ -54,19 +54,30 @@ class SortBenchmark : public MicroBenchmarkBasicFixture {
                                              const std::optional<std::vector<std::string>>& column_names = std::nullopt,
                                              const std::optional<float> null_ratio = std::nullopt) {
     const auto table_generator = std::make_shared<SyntheticTableGenerator>();
-
     size_t num_columns = 1;
     if (column_names.has_value()) {
       num_columns = column_names.value().size();
     }
 
     const int max_different_value = 10'000;
-    const std::vector<DataType> column_data_types = {num_columns, data_type};
+    std::vector<ColumnSpecification> column_specifications;
+    column_specifications.reserve(num_columns);
 
-    return table_generator->generate_table(
-        {num_columns, {ColumnDataDistribution::make_uniform_config(0.0, max_different_value)}}, column_data_types,
-        row_count, chunk_size, std::vector<SegmentEncodingSpec>(num_columns, {EncodingType::Unencoded}), column_names,
-        UseMvcc::Yes, null_ratio);
+    for (size_t i = 0; i < num_columns; i++) {
+      std::optional<std::string> column_name;
+      if (column_names.has_value()) {
+        column_name = (*column_names)[i];
+      } else {
+        column_name = std::nullopt;
+      }
+      ColumnSpecification column_specification = {ColumnDataDistribution::make_uniform_config(0.0, max_different_value),
+                                                  data_type, column_name, null_ratio};
+      column_specifications.push_back(column_specification);
+    }
+
+    return table_generator->generate_table(column_specifications, row_count, chunk_size,
+                                           std::vector<SegmentEncodingSpec>(num_columns, {EncodingType::Unencoded}),
+                                           UseMvcc::Yes);
   }
 
   void InitializeCustomTableWrapper(const size_t row_count, const ChunkOffset chunk_size,
