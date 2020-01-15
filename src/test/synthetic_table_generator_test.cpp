@@ -7,7 +7,9 @@
 
 namespace opossum {
 
-TEST(SyntheticTableGeneratorTest, StringGeneration) {
+class SyntheticTableGeneratorTest : public BaseTest {};
+
+TEST_F(SyntheticTableGeneratorTest, StringGeneration) {
   EXPECT_EQ(SyntheticTableGenerator::generate_value<pmr_string>(0), "          ");
   EXPECT_EQ(SyntheticTableGenerator::generate_value<pmr_string>(1), "         1");
   EXPECT_EQ(SyntheticTableGenerator::generate_value<pmr_string>(2), "         2");
@@ -20,24 +22,24 @@ TEST(SyntheticTableGeneratorTest, StringGeneration) {
   ASSERT_THROW(SyntheticTableGenerator::generate_value<pmr_string>(-17), std::logic_error);
 }
 
-TEST(SyntheticTableGeneratorTest, ThrowOnParameterLengthMismatch) {
+TEST_F(SyntheticTableGeneratorTest, ThrowOnParameterLengthMismatch) {
   auto table_generator = std::make_shared<SyntheticTableGenerator>();
-  const auto uniform_distribution = ColumnDataDistribution::make_uniform_config(0.0, 1.0);
+  auto uniform_distribution_0_1 = ColumnDataDistribution::make_uniform_config(0.0, 1.0);
+  std::vector<ColumnSpecification> column_specs = {size_t{5}, {uniform_distribution_0_1, DataType::Double}};
+  std::vector<SegmentEncodingSpec> chunk_encoding_specs = {size_t{2}, {EncodingType::Dictionary}};
 
-  // vectors storing the column properties are expected to have the same length
-  ASSERT_THROW(table_generator->generate_table({uniform_distribution, uniform_distribution}, {DataType::Int}, 15, 10),
-               std::logic_error);
-  ASSERT_THROW(table_generator->generate_table({uniform_distribution}, {DataType::Int, DataType::Int}, 15, 10),
+  // vector storing the column properties ist expected to have the same length as vector storing the encoding
+  ASSERT_THROW(table_generator->generate_table(column_specs, size_t{100}, size_t{10}, chunk_encoding_specs),
                std::logic_error);
 }
 
-TEST(SyntheticTableGeneratorTest, TestGeneratedValueRange) {
+TEST_F(SyntheticTableGeneratorTest, TestGeneratedValueRange) {
   constexpr auto row_count = size_t{100};
   constexpr auto chunk_size = size_t{10};
   auto table_generator = std::make_shared<SyntheticTableGenerator>();
   auto uniform_distribution_0_1 = ColumnDataDistribution::make_uniform_config(0.0, 1.0);
 
-  auto table = table_generator->generate_table({uniform_distribution_0_1}, {DataType::Double}, row_count, chunk_size,
+  auto table = table_generator->generate_table({{uniform_distribution_0_1, DataType::Double}}, row_count, chunk_size,
                                                {{EncodingType::Dictionary}});
   for (auto table_row_id = size_t{0}; table_row_id < 100; ++table_row_id) {
     const auto value = table->get_value<double>(ColumnID{0}, table_row_id);
@@ -69,13 +71,10 @@ TEST_P(SyntheticTableGeneratorDataTypeTests, IntegerTable) {
   std::transform(all_segment_encoding_specs.begin(), all_segment_encoding_specs.end(),
                  std::back_inserter(supported_segment_encodings), replace_unsupporting_encoding_types);
 
-  const auto test_data_types = std::vector<DataType>(supported_segment_encodings.size(), tested_data_type);
-  const auto test_data_distributions =
-      std::vector<ColumnDataDistribution>(supported_segment_encodings.size(), std::get<1>(GetParam()));
-  const auto column_names = std::vector<std::string>(supported_segment_encodings.size(), "column_name");
+  ColumnSpecification column_specification = {std::get<1>(GetParam()), tested_data_type, "column_name", std::nullopt};
 
-  auto table = table_generator->generate_table(test_data_distributions, test_data_types, row_count, chunk_size,
-                                               supported_segment_encodings, column_names);
+  auto table = table_generator->generate_table({supported_segment_encodings.size(), column_specification}, row_count,
+                                               chunk_size, supported_segment_encodings);
 
   const auto generated_chunk_count = table->chunk_count();
   const auto generated_column_count = table->column_count();
