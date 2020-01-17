@@ -221,6 +221,8 @@ class SortNew::SortNewImpl {
       auto base_segment = chunk->get_segment(_column_id);
 
       if (pos_list) {
+        // TODO(anyone): Replace this because pos_list can reference more than one chunk
+        // TODO(anyone): (For example, take inspiration from the output materialization step)
         segment_iterate_filtered<SortColumnType>(*base_segment, pos_list, [&](const auto& position) {
           if (position.is_null()) {
             null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
