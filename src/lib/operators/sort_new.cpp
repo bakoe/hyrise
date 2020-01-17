@@ -1,5 +1,6 @@
 #include "sort_new.hpp"
-#include <storage/segment_iterate.hpp>
+
+#include "storage/segment_iterate.hpp"
 
 namespace opossum {
 
@@ -35,98 +36,25 @@ std::shared_ptr<AbstractOperator> SortNew::_on_deep_copy(
 void SortNew::_on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) {}
 
 std::shared_ptr<const Table> SortNew::_on_execute() {
-  std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> filtered_rows = _get_filtered_rows();
+  std::shared_ptr<PosList> previously_sorted_pos_list = std::shared_ptr<PosList>(nullptr);
 
-  std::stable_sort(
-      filtered_rows.begin(), filtered_rows.end(),
-      [&](const std::pair<RowID, std::vector<AllTypeVariant>>& row_a,
-          const std::pair<RowID, std::vector<AllTypeVariant>>& row_b) {
-        for (auto column_id = ColumnID{0}; column_id < _sort_definitions.size(); ++column_id) {
-          auto sort_definition = _sort_definitions[column_id];
-          DataType data_type = _sort_definition_data_types[column_id];
-          OrderByMode order_by_mode = sort_definition.order_by_mode;
-          AllTypeVariant value_a = row_a.second[column_id];
-          AllTypeVariant value_b = row_b.second[column_id];
+  for (auto column_id = _sort_definitions.size(); column_id-- != 0;) {
+    auto sort_definition = _sort_definitions[column_id];
+    DataType data_type = _sort_definition_data_types[column_id];
 
-          bool value_a_is_null = variant_is_null(value_a);
-          bool value_b_is_null = variant_is_null(value_b);
-
-          if (value_a_is_null && value_b_is_null) {
-            // To ensure stable-ness, put value_a before value_b if both values are NULL
-            return true;
-          }
-
-          if (order_by_mode == OrderByMode::Ascending || order_by_mode == OrderByMode::Descending) {
-            // Put the NULL element before the non-NULL element
-            if (value_a_is_null && !value_b_is_null) {
-              return true;
-            }
-            if (!value_a_is_null && value_b_is_null) {
-              return false;
-            }
-          }
-
-          if (order_by_mode == OrderByMode::AscendingNullsLast || order_by_mode == OrderByMode::DescendingNullsLast) {
-            // Put the NULL element after the non-NULL element
-            if (value_a_is_null && !value_b_is_null) {
-              return false;
-            }
-            if (!value_a_is_null && value_b_is_null) {
-              return true;
-            }
-          }
-
-          std::optional<bool> result;
-          resolve_data_type(data_type, [&](auto type) {
-            using ValueType = typename decltype(type)::type;
-
-            int8_t comparison_result =
-                SortNew::_compare<ValueType>(boost::get<ValueType>(value_a), boost::get<ValueType>(value_b));
-
-            if (comparison_result == 0) {
-              return;
-            }
-
-            if (order_by_mode == OrderByMode::Ascending) {
-              result = (comparison_result < 0);
-              return;
-            } else {
-              result = (comparison_result > 0);
-              return;
-            }
-          });
-
-          if (result.has_value()) {
-            return result.value();
-          }
-        }
-        // If the values are equal, value_a is considered to be "before" value_b for stable-ness
-        return true;
-      });
-
-  // TODO(anyone): Materialize output, similar to Sort::SortImplMaterializeOutput
-  auto output = _get_materialized_output(filtered_rows);
-
-  return output;
-}
-
-template <typename ValueType>
-int8_t SortNew::_compare(ValueType value_a, ValueType value_b) {
-  if (value_a == value_b) {
-    return 0;
+    resolve_data_type(data_type, [&](auto type) {
+      using ColumnDataType = typename decltype(type)::type;
+      auto sort_single_col_impl = SortNewImpl<ColumnDataType>(input_table_left(), sort_definition.column,
+                                                              sort_definition.order_by_mode, _output_chunk_size);
+      previously_sorted_pos_list = sort_single_col_impl.sort_one_column(previously_sorted_pos_list);
+    });
   }
-  if (value_a < value_b) {
-    return -1;
-  }
-  return 1;
+
+  Assert(previously_sorted_pos_list, "Not expecting a null previously_sorted_pos_list pointer here");
+  return _get_materialized_output(previously_sorted_pos_list);
 }
 
-void SortNew::_on_cleanup() {
-  // TODO(anyone): Implement, if necessary
-}
-
-std::shared_ptr<Table> SortNew::_get_materialized_output(
-    std::vector<std::pair<RowID, std::vector<AllTypeVariant>>>& sorted_rows) {
+std::shared_ptr<const Table> SortNew::_get_materialized_output(const std::shared_ptr<PosList>& pos_list) {
   // First we create a new table as the output
   auto output =
       std::make_shared<Table>(_input_left->get_output()->column_definitions(), TableType::Data, _output_chunk_size);
@@ -136,8 +64,9 @@ std::shared_ptr<Table> SortNew::_get_materialized_output(
   // After we created the output table and initialized the column structure, we can start adding values. Because the
   // values are not ordered by input chunks anymore, we can't process them chunk by chunk. Instead the values are
   // copied column by column for each output row. For each column in a row we visit the input segment with a reference
-  // to the output segment.
-  const auto row_count_out = sorted_rows.size();
+  // to the output segment. This enables for the SortImplMaterializeOutput class to ignore the column types during the
+  // copying of the values.
+  const auto row_count_out = pos_list->size();
 
   // Ceiling of integer division
   const auto div_ceil = [](auto x, auto y) { return (x + y - 1u) / y; };
@@ -169,7 +98,7 @@ std::shared_ptr<Table> SortNew::_get_materialized_output(
       segment_ptr_and_accessor_by_chunk_id.reserve(row_count_out);
 
       for (auto row_index = 0u; row_index < row_count_out; ++row_index) {
-        const auto [chunk_id, chunk_offset] = sorted_rows.at(row_index).first;
+        const auto [chunk_id, chunk_offset] = pos_list->operator[](row_index);
 
         auto& segment_ptr_and_typed_ptr_pair = segment_ptr_and_accessor_by_chunk_id[chunk_id];
         auto& base_segment = segment_ptr_and_typed_ptr_pair.first;
@@ -223,41 +152,111 @@ std::shared_ptr<Table> SortNew::_get_materialized_output(
   return output;
 }
 
-std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> SortNew::_get_filtered_rows() {
-  auto table = _input_left->get_output();
+void SortNew::_on_cleanup() {
+  // TODO(anyone): Implement, if necessary
+}
 
-  // Allocate all rows
-  auto rows = std::vector<std::pair<RowID, std::vector<AllTypeVariant>>>{table->row_count()};
-  const auto num_columns = _sort_definitions.size();
-  for (auto& row : rows) {
-    row.second.resize(num_columns);
+template <typename SortColumnType>
+class SortNew::SortNewImpl {
+ public:
+  using RowIDValuePair = std::pair<RowID, SortColumnType>;
+
+  SortNewImpl(const std::shared_ptr<const Table>& table_in, const ColumnID column_id,
+              const OrderByMode order_by_mode = OrderByMode::Ascending, const size_t output_chunk_size = 0)
+      : _table_in(table_in),
+        _column_id(column_id),
+        _order_by_mode(order_by_mode),
+        _output_chunk_size(output_chunk_size) {
+    // initialize a structure which can be sorted by std::sort
+    _row_id_value_vector = std::make_shared<std::vector<RowIDValuePair>>();
+    _null_value_rows = std::make_shared<std::vector<RowIDValuePair>>();
   }
 
-  // Materialize the Chunks
-  auto chunk_begin_row_idx = size_t{0};
-  const auto chunk_count = table->chunk_count();
-  for (auto chunk_id = ChunkID{0}; chunk_id < chunk_count; ++chunk_id) {
-    const auto chunk = table->get_chunk(chunk_id);
-    if (!chunk) continue;
+  std::shared_ptr<PosList> sort_one_column(std::shared_ptr<PosList> pos_list = nullptr) {
+    // 1. Prepare Sort: Creating rowid-value-Structure
+    _materialize_sort_column(pos_list);
 
-    for (auto column_id = ColumnID{0}; column_id < num_columns; ++column_id) {
-      auto sort_definition = _sort_definitions[column_id];
-      // TODO(anyone): Clarify: Is this inefficient, i. e. could it be improved by iterating row by row instead?
-      segment_iterate(*chunk->get_segment(sort_definition.column), [&](const auto& segment_position) {
-        RowID row_id = {chunk_id, segment_position.chunk_offset()};
-        rows[chunk_begin_row_idx + segment_position.chunk_offset()].first = row_id;
-        if (!segment_position.is_null()) {
-          rows[chunk_begin_row_idx + segment_position.chunk_offset()].second[column_id] = segment_position.value();
-        } else {
-          rows[chunk_begin_row_idx + segment_position.chunk_offset()].second[column_id] = NULL_VALUE;
-        }
-      });
+    // 2. After we got our ValueRowID Map we sort the map by the value of the pair
+    if (_order_by_mode == OrderByMode::Ascending || _order_by_mode == OrderByMode::AscendingNullsLast) {
+      _sort_with_operator<std::less<>>();
+    } else {
+      _sort_with_operator<std::greater<>>();
     }
 
-    chunk_begin_row_idx += chunk->size();
+    // 2b. Insert null rows if necessary
+    if (!_null_value_rows->empty()) {
+      if (_order_by_mode == OrderByMode::AscendingNullsLast || _order_by_mode == OrderByMode::DescendingNullsLast) {
+        // NULLs last
+        _row_id_value_vector->insert(_row_id_value_vector->end(), _null_value_rows->begin(), _null_value_rows->end());
+      } else {
+        // NULLs first (default behavior)
+        _row_id_value_vector->insert(_row_id_value_vector->begin(), _null_value_rows->begin(), _null_value_rows->end());
+      }
+    }
+
+    pos_list.reset();
+    pos_list = std::make_shared<PosList>();
+
+    for (size_t row_id_value_pair_idx = 0; row_id_value_pair_idx < _row_id_value_vector->size();
+         row_id_value_pair_idx++) {
+      pos_list->emplace_back(_row_id_value_vector->operator[](row_id_value_pair_idx).first);
+    }
+
+    return pos_list;
   }
 
-  return rows;
-}
+ protected:
+  // completely materializes the sort column to create a vector of RowID-Value pairs
+  void _materialize_sort_column(std::shared_ptr<PosList> pos_list = nullptr) {
+    auto& row_id_value_vector = *_row_id_value_vector;
+    row_id_value_vector.reserve(_table_in->row_count());
+
+    auto& null_value_rows = *_null_value_rows;
+
+    const auto chunk_count = _table_in->chunk_count();
+    for (ChunkID chunk_id{0}; chunk_id < chunk_count; ++chunk_id) {
+      const auto chunk = _table_in->get_chunk(chunk_id);
+      Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
+
+      auto base_segment = chunk->get_segment(_column_id);
+
+      if (pos_list) {
+        segment_iterate_filtered<SortColumnType>(*base_segment, pos_list, [&](const auto& position) {
+          if (position.is_null()) {
+            null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
+          } else {
+            row_id_value_vector.emplace_back(RowID{chunk_id, position.chunk_offset()}, position.value());
+          }
+        });
+      } else {
+        segment_iterate<SortColumnType>(*base_segment, [&](const auto& position) {
+          if (position.is_null()) {
+            null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
+          } else {
+            row_id_value_vector.emplace_back(RowID{chunk_id, position.chunk_offset()}, position.value());
+          }
+        });
+      }
+    }
+  }
+
+  template <typename Comparator>
+  void _sort_with_operator() {
+    Comparator comparator;
+    std::stable_sort(_row_id_value_vector->begin(), _row_id_value_vector->end(),
+                     [comparator](RowIDValuePair a, RowIDValuePair b) { return comparator(a.second, b.second); });
+  }
+
+  const std::shared_ptr<const Table> _table_in;
+
+  // column to sort by
+  const ColumnID _column_id;
+  const OrderByMode _order_by_mode;
+  // chunk size of the materialized output
+  const size_t _output_chunk_size;
+
+  std::shared_ptr<std::vector<RowIDValuePair>> _row_id_value_vector;
+  std::shared_ptr<std::vector<RowIDValuePair>> _null_value_rows;
+};
 
 }  // namespace opossum

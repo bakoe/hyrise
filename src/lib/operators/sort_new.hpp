@@ -50,11 +50,10 @@ class SortNew : public AbstractReadOnlyOperator {
       const std::shared_ptr<AbstractOperator>& copied_input_right) const override;
   void _on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) override;
 
-  // TODO(anyone): Copied from Table::get_rows; maybe move into Table implementation or factor out util/helper function
-  std::vector<std::pair<RowID, std::vector<AllTypeVariant>>> _get_filtered_rows();
+  template <typename SortColumnType>
+  class SortNewImpl;
 
-  std::shared_ptr<Table> _get_materialized_output(
-      std::vector<std::pair<RowID, std::vector<AllTypeVariant>>>& sorted_rows);
+  std::shared_ptr<const Table> _get_materialized_output(const std::shared_ptr<PosList>& pos_list = nullptr);
 
   template <typename ValueType>
   int8_t _compare(ValueType value_a, ValueType value_b);
