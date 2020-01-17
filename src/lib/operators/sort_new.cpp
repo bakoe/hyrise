@@ -213,24 +213,30 @@ class SortNew::SortNewImpl {
 
     auto& null_value_rows = *_null_value_rows;
 
-    const auto chunk_count = _table_in->chunk_count();
-    for (ChunkID chunk_id{0}; chunk_id < chunk_count; ++chunk_id) {
-      const auto chunk = _table_in->get_chunk(chunk_id);
-      Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
+    if (pos_list) {
+      for (RowID row_id : *pos_list) {
+        const auto chunk = _table_in->get_chunk(row_id.chunk_id);
+        Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
 
-      auto base_segment = chunk->get_segment(_column_id);
+        auto base_segment = chunk->get_segment(_column_id);
 
-      if (pos_list) {
-        // TODO(anyone): Replace this because pos_list can reference more than one chunk
-        // TODO(anyone): (For example, take inspiration from the output materialization step)
-        segment_iterate_filtered<SortColumnType>(*base_segment, pos_list, [&](const auto& position) {
-          if (position.is_null()) {
-            null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
-          } else {
-            row_id_value_vector.emplace_back(RowID{chunk_id, position.chunk_offset()}, position.value());
-          }
-        });
-      } else {
+        // TODO(anyone): Use a more efficient (i. e. segment type dependent) way of materializing the values
+        const AllTypeVariant value = base_segment->operator[](row_id.chunk_offset);
+
+        if (variant_is_null(value)) {
+          null_value_rows.emplace_back(row_id, SortColumnType{});
+        } else {
+          row_id_value_vector.emplace_back(row_id, boost::get<SortColumnType>(value));
+        }
+      }
+    } else {
+      const auto chunk_count = _table_in->chunk_count();
+      for (ChunkID chunk_id{0}; chunk_id < chunk_count; ++chunk_id) {
+        const auto chunk = _table_in->get_chunk(chunk_id);
+        Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
+
+        auto base_segment = chunk->get_segment(_column_id);
+
         segment_iterate<SortColumnType>(*base_segment, [&](const auto& position) {
           if (position.is_null()) {
             null_value_rows.emplace_back(RowID{chunk_id, position.chunk_offset()}, SortColumnType{});
