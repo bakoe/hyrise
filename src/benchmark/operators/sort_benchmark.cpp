@@ -10,12 +10,95 @@
 #include "logical_query_plan/lqp_translator.hpp"
 #include "operators/limit.hpp"
 #include "operators/sort.hpp"
+#include "operators/sort_new.hpp"
 #include "operators/table_wrapper.hpp"
 #include "sql/sql_pipeline_builder.hpp"
 #include "sql/sql_translator.hpp"
 #include "synthetic_table_generator.hpp"
 
+#include "micro_benchmark_utils.hpp"
+
 namespace opossum {
+
+static std::shared_ptr<Table> generate_custom_table(
+    const size_t row_count, const ChunkOffset chunk_size, const DataType data_type = DataType::Int,
+    const std::optional<std::vector<std::string>>& column_names = std::nullopt,
+    const std::optional<float> null_ratio = std::nullopt) {
+  const auto table_generator = std::make_shared<SyntheticTableGenerator>();
+
+  size_t num_columns = 2;
+  if (column_names.has_value()) {
+    num_columns = column_names.value().size();
+  }
+
+  const int max_different_value = 10'000;
+  const std::vector<DataType> column_data_types = {num_columns, data_type};
+
+  return table_generator->generate_table(
+      {num_columns, {ColumnDataDistribution::make_uniform_config(0.0, max_different_value)}}, column_data_types,
+      row_count, chunk_size, std::vector<SegmentEncodingSpec>(num_columns, {EncodingType::Unencoded}), column_names,
+      UseMvcc::Yes, null_ratio);
+}
+
+template <class SortOperator>
+static void BM_Sort(benchmark::State& state, const size_t row_count = 40'000, const ChunkOffset chunk_size = 2'000,
+                    const DataType data_type = DataType::Int,
+                    const std::optional<std::vector<std::string>>& column_names = std::nullopt,
+                    const std::optional<float> null_ratio = std::nullopt, const bool multi_column_sort = true) {
+  micro_benchmark_clear_cache();
+
+  auto table_wrapper =
+      std::make_shared<TableWrapper>(generate_custom_table(row_count, chunk_size, data_type, column_names, null_ratio));
+  table_wrapper->execute();
+  auto warm_up = std::make_shared<SortOperator>(table_wrapper, ColumnID{0} /* "a" */, OrderByMode::Ascending);
+  warm_up->execute();
+  for (auto _ : state) {
+    if (multi_column_sort) {
+      auto sort_a = std::make_shared<SortOperator>(table_wrapper, ColumnID{0} /* "a" */, OrderByMode::Ascending);
+      sort_a->execute();
+      auto sort_b = std::make_shared<SortOperator>(sort_a, ColumnID{1} /* "a" */, OrderByMode::Descending);
+      sort_b->execute();
+    } else {
+      auto sort = std::make_shared<SortOperator>(table_wrapper, ColumnID{0} /* "a" */, OrderByMode::Ascending);
+      sort->execute();
+    }
+  }
+}
+
+template <class SortOperator>
+static void BM_SortNew(benchmark::State& state, const size_t row_count = 40'000, const ChunkOffset chunk_size = 2'000,
+                       const DataType data_type = DataType::Int,
+                       const std::optional<std::vector<std::string>>& column_names = std::nullopt,
+                       const std::optional<float> null_ratio = std::nullopt, const bool multi_column_sort = true) {
+  micro_benchmark_clear_cache();
+
+  auto table_wrapper =
+      std::make_shared<TableWrapper>(generate_custom_table(row_count, chunk_size, data_type, column_names, null_ratio));
+  table_wrapper->execute();
+  auto warm_up = std::make_shared<SortOperator>(table_wrapper, ColumnID{0} /* "a" */, OrderByMode::Ascending);
+  warm_up->execute();
+  for (auto _ : state) {
+    if (multi_column_sort) {
+      std::vector<SortColumnDefinition> sort_definitions = {{ColumnID{1}, OrderByMode::Descending},
+                                                            {ColumnID{0}, OrderByMode::Ascending}};
+      auto sort = std::make_shared<SortOperator>(table_wrapper, sort_definitions);
+      sort->execute();
+    } else {
+      auto sort = std::make_shared<SortOperator>(table_wrapper, ColumnID{0} /* "a" */, OrderByMode::Ascending);
+      sort->execute();
+    }
+  }
+}
+
+static void BM_SortNewWithVaryingRowCount(benchmark::State& state) {
+  const size_t row_count = state.range(0);
+  BM_SortNew<SortNew>(state, row_count);
+}
+
+static void BM_SortWithVaryingRowCount(benchmark::State& state) {
+  const size_t row_count = state.range(0);
+  BM_Sort<Sort>(state, row_count);
+}
 
 class SortBenchmark : public MicroBenchmarkBasicFixture {
  public:
@@ -123,95 +206,7 @@ class SortLargeBenchmark : public SortBenchmark {
   void SetUp(benchmark::State& st) override { InitializeCustomTableWrapper(size_t{400'000}, ChunkOffset{2'000}); }
 };
 
-class SortReferencePicoBenchmark : public SortPicoBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    SortPicoBenchmark::SetUp(st);
-    MakeReferenceTable();
-  }
-};
-
-class SortReferenceSmallBenchmark : public SortSmallBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    SortSmallBenchmark::SetUp(st);
-    MakeReferenceTable();
-  }
-};
-
-class SortReferenceBenchmark : public SortBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    SortBenchmark::SetUp(st);
-    MakeReferenceTable();
-  }
-};
-
-class SortReferenceLargeBenchmark : public SortLargeBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    SortLargeBenchmark::SetUp(st);
-    MakeReferenceTable();
-  }
-};
-
-class SortStringSmallBenchmark : public SortBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    InitializeCustomTableWrapper(size_t{4'000}, ChunkOffset{2'000}, DataType::String);
-  }
-};
-
-class SortStringBenchmark : public SortBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    InitializeCustomTableWrapper(size_t{40'000}, ChunkOffset{2'000}, DataType::String);
-  }
-};
-
-class SortStringLargeBenchmark : public SortBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    InitializeCustomTableWrapper(size_t{400'000}, ChunkOffset{2'000}, DataType::String);
-  }
-};
-
-class SortNullBenchmark : public SortBenchmark {
- public:
-  void SetUp(benchmark::State& st) override {
-    InitializeCustomTableWrapper(size_t{40'000}, ChunkOffset{2'000}, DataType::Int, std::nullopt,
-                                 std::optional<float>{0.2});
-  }
-};
-
-
-BENCHMARK_F(SortPicoBenchmark, BM_SortPico)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortSmallBenchmark, BM_SortSmall)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortBenchmark, BM_Sort)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortLargeBenchmark, BM_SortLarge)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortReferencePicoBenchmark, BM_SortReferencePico)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortReferenceSmallBenchmark, BM_SortReferenceSmall)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortReferenceBenchmark, BM_SortReference)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortReferenceLargeBenchmark, BM_SortReferenceLarge)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortStringSmallBenchmark, BM_SortStringSmall)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortStringBenchmark, BM_SortString)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortStringLargeBenchmark, BM_SortStringLarge)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortNullBenchmark, BM_SortNullBenchmark)(benchmark::State& state) { BM_Sort(state); }
-
-BENCHMARK_F(SortBenchmark, BM_SortSingleColumnSQL)(benchmark::State& state) { BM_SortSingleColumnSQL(state); }
-
-BENCHMARK_F(SortBenchmark, BM_SortMultiColumnSQL)(benchmark::State& state) { BM_SortMultiColumnSQL(state); }
-
+BENCHMARK(BM_SortWithVaryingRowCount)->RangeMultiplier(10)->Range(4, 400'000);
+BENCHMARK(BM_SortNewWithVaryingRowCount)->RangeMultiplier(10)->Range(4, 400'000);
 
 }  // namespace opossum
