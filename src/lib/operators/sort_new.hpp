@@ -58,8 +58,7 @@ class SortNew : public AbstractReadOnlyOperator {
   template <typename ValueType>
   int8_t _compare(ValueType value_a, ValueType value_b);
 
-  // TODO(anyone): Enable and implement the following for sort definition validation (see abstract_aggregate_operator)
-  // void _validate_sort_definitions() const;
+   void _validate_sort_definitions() const;
 
   // TODO(anyone): Add and implement other "boilerplate" methods like _on_cleanup, _on_deep_copy etc.
 

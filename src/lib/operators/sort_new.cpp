@@ -38,6 +38,8 @@ void SortNew::_on_set_parameters(const std::unordered_map<ParameterID, AllTypeVa
 std::shared_ptr<const Table> SortNew::_on_execute() {
   std::shared_ptr<PosList> previously_sorted_pos_list = std::shared_ptr<PosList>(nullptr);
 
+  _validate_sort_definitions();
+
   for (auto column_id = _sort_definitions.size(); column_id-- != 0;) {
     auto sort_definition = _sort_definitions[column_id];
     DataType data_type = _sort_definition_data_types[column_id];
@@ -154,6 +156,16 @@ std::shared_ptr<const Table> SortNew::_get_materialized_output(const std::shared
 
 void SortNew::_on_cleanup() {
   // TODO(anyone): Implement, if necessary
+}
+
+/**
+ * Asserts that all column definitions are valid.
+ */
+void SortNew::_validate_sort_definitions() const {
+  const auto input_table = input_table_left();
+  for (const auto& column_sort_definition : _sort_definitions) {
+    Assert(column_sort_definition.column != INVALID_COLUMN_ID, "Sort: Invalid column in sort definition");
+  }
 }
 
 template <typename SortColumnType>
