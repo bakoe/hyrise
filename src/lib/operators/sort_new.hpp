@@ -56,12 +56,7 @@ class SortNew : public AbstractReadOnlyOperator {
 
   std::shared_ptr<const Table> _get_materialized_output(const std::shared_ptr<PosList>& pos_list = nullptr);
 
-  template <typename ValueType>
-  int8_t _compare(ValueType value_a, ValueType value_b);
-
-   void _validate_sort_definitions() const;
-
-  // TODO(anyone): Add and implement other "boilerplate" methods like _on_cleanup, _on_deep_copy etc.
+  void _validate_sort_definitions() const;
 
   const std::vector<SortColumnDefinition> _sort_definitions;
   std::vector<DataType> _sort_definition_data_types;
