@@ -34,11 +34,10 @@ struct SortColumnDefinition final {
 class SortNew : public AbstractReadOnlyOperator {
  public:
   SortNew(const std::shared_ptr<const AbstractOperator>& in, const std::vector<SortColumnDefinition>& sort_definitions,
-          const size_t output_chunk_size = Chunk::DEFAULT_SIZE);
+          size_t output_chunk_size = Chunk::DEFAULT_SIZE);
 
-  SortNew(const std::shared_ptr<const AbstractOperator>& in, const ColumnID column_id,
-          const OrderByMode order_by_mode = OrderByMode::Ascending,
-          const size_t output_chunk_size = Chunk::DEFAULT_SIZE);
+  SortNew(const std::shared_ptr<const AbstractOperator>& in, ColumnID column_id,
+          OrderByMode order_by_mode = OrderByMode::Ascending, size_t output_chunk_size = Chunk::DEFAULT_SIZE);
 
   const std::vector<SortColumnDefinition>& sort_definitions() const;
 
