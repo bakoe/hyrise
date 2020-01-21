@@ -225,6 +225,7 @@ class SortNew::SortNewImpl {
     auto& null_value_rows = *_null_value_rows;
 
     if (pos_list) {
+      // When there was a preceding sorting run, we materialize according to the passed PosList.
       for (RowID row_id : *pos_list) {
         const auto chunk = _table_in->get_chunk(row_id.chunk_id);
         Assert(chunk, "Did not expect deleted chunk here.");  // see #1686

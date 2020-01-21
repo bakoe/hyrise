@@ -15,7 +15,7 @@
 namespace opossum {
 
 /**
- * TODO(anyone): Add documentation comment, similar to the one of AggregateColumnDefinition
+ * Defines in which order a certain column should be sorted.
  */
 struct SortColumnDefinition final {
   SortColumnDefinition(const ColumnID& column, const OrderByMode order_by_mode = OrderByMode::Ascending)
@@ -27,7 +27,9 @@ struct SortColumnDefinition final {
 };
 
 /**
- * TODO(anyone): Add documentation comment
+ * Operator to sort a table by a single column. This implements a stable sort, i.e., rows that share the same value will
+ * maintain their relative order.
+ * By passing multiple sort column definitions it is possible to sort multiple columns with one operator run.
  */
 class SortNew : public AbstractReadOnlyOperator {
  public:
