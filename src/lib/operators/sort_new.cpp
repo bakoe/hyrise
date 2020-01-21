@@ -209,9 +209,8 @@ class SortNew::SortNewImpl {
     pos_list.reset();
     pos_list = std::make_shared<PosList>();
 
-    for (size_t row_id_value_pair_idx = 0; row_id_value_pair_idx < _row_id_value_vector->size();
-         row_id_value_pair_idx++) {
-      pos_list->emplace_back(_row_id_value_vector->operator[](row_id_value_pair_idx).first);
+    for (auto& row_id_value : *_row_id_value_vector) {
+      pos_list->emplace_back(row_id_value.first);
     }
 
     return pos_list;
