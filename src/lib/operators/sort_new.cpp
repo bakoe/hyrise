@@ -225,20 +225,39 @@ class SortNew::SortNewImpl {
     auto& null_value_rows = *_null_value_rows;
 
     if (pos_list) {
+      auto segment_ptr_and_accessor_by_chunk_id =
+          std::unordered_map<ChunkID, std::pair<std::shared_ptr<const BaseSegment>,
+                                                std::shared_ptr<AbstractSegmentAccessor<SortColumnType>>>>();
+      segment_ptr_and_accessor_by_chunk_id.reserve(_table_in->chunk_count());
+
       // When there was a preceding sorting run, we materialize according to the passed PosList.
       for (RowID row_id : *pos_list) {
-        const auto chunk = _table_in->get_chunk(row_id.chunk_id);
-        Assert(chunk, "Did not expect deleted chunk here.");  // see #1686
+        const auto [chunk_id, chunk_offset] = row_id;
 
-        auto base_segment = chunk->get_segment(_column_id);
+        auto& segment_ptr_and_typed_ptr_pair = segment_ptr_and_accessor_by_chunk_id[chunk_id];
+        auto& base_segment = segment_ptr_and_typed_ptr_pair.first;
+        auto& accessor = segment_ptr_and_typed_ptr_pair.second;
 
-        // TODO(anyone): Use a more efficient (i. e. segment type dependent) way of materializing the values
-        const AllTypeVariant value = base_segment->operator[](row_id.chunk_offset);
+        if (!base_segment) {
+          base_segment = _table_in->get_chunk(chunk_id)->get_segment(_column_id);
+          accessor = create_segment_accessor<SortColumnType>(base_segment);
+        }
 
-        if (variant_is_null(value)) {
-          null_value_rows.emplace_back(row_id, SortColumnType{});
+        // If the input segment is not a ReferenceSegment, we can take a fast(er) path
+        if (accessor) {
+          const auto typed_value = accessor->access(chunk_offset);
+          if (!typed_value) {
+            null_value_rows.emplace_back(row_id, SortColumnType{});
+          } else {
+            row_id_value_vector.emplace_back(row_id, typed_value.value());
+          }
         } else {
-          row_id_value_vector.emplace_back(row_id, boost::get<SortColumnType>(value));
+          const auto value = (*base_segment)[chunk_offset];
+          if (variant_is_null(value)) {
+            null_value_rows.emplace_back(row_id, SortColumnType{});
+          } else {
+            row_id_value_vector.emplace_back(row_id, boost::get<SortColumnType>(value));
+          }
         }
       }
     } else {
