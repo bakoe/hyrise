@@ -21,7 +21,6 @@ struct SortColumnDefinition final {
   SortColumnDefinition(const ColumnID& column, const OrderByMode order_by_mode = OrderByMode::Ascending)
       : column(column), order_by_mode(order_by_mode) {}
 
-  // TODO(anyone): Maybe rename here and in AggregateColumnDefinition to column_id
   const ColumnID column;
   const OrderByMode order_by_mode;
 };
