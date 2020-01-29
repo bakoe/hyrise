@@ -143,6 +143,16 @@ static void BM_SortWithReferenceSegments(benchmark::State& state) {
   BM_Sort(state, row_count, ChunkOffset{2'000}, DataType::Int, std::nullopt, std::nullopt, false, true);
 }
 
+static void BM_SortNewWithReferenceSegmentsTwoColumns(benchmark::State& state) {
+  const size_t row_count = state.range(0);
+  BM_SortNew(state, row_count, ChunkOffset{2'000}, DataType::Int, std::nullopt, std::nullopt, true, true);
+}
+
+static void BM_SortWithReferenceSegmentsTwoColumns(benchmark::State& state) {
+  const size_t row_count = state.range(0);
+  BM_Sort(state, row_count, ChunkOffset{2'000}, DataType::Int, std::nullopt, std::nullopt, true, true);
+}
+
 static void BM_SortNewWithStrings(benchmark::State& state) {
   const size_t row_count = state.range(0);
   BM_SortNew(state, row_count, ChunkOffset{2'000}, DataType::String);
@@ -164,6 +174,9 @@ BENCHMARK(BM_SortNewWithNullValues)->RangeMultiplier(10)->Range(4, 400'000);
 
 BENCHMARK(BM_SortWithReferenceSegments)->RangeMultiplier(10)->Range(4, 400'000);
 BENCHMARK(BM_SortNewWithReferenceSegments)->RangeMultiplier(10)->Range(4, 400'000);
+
+BENCHMARK(BM_SortWithReferenceSegmentsTwoColumns)->RangeMultiplier(10)->Range(4, 400'000);
+BENCHMARK(BM_SortNewWithReferenceSegmentsTwoColumns)->RangeMultiplier(10)->Range(4, 400'000);
 
 BENCHMARK(BM_SortWithStrings)->RangeMultiplier(10)->Range(4, 400'000);
 BENCHMARK(BM_SortNewWithStrings)->RangeMultiplier(10)->Range(4, 400'000);
