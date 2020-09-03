@@ -238,6 +238,8 @@ set(
     operators/projection.hpp
     operators/sort.cpp
     operators/sort.hpp
+    operators/sort_new.cpp
+    operators/sort_new.hpp
     operators/table_scan.cpp
     operators/table_scan.hpp
     operators/table_scan/abstract_dereferenced_column_table_scan_impl.cpp

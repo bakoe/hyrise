@@ -1,0 +1,66 @@
+#pragma once
+
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "abstract_read_only_operator.hpp"
+#include "resolve_type.hpp"
+#include "storage/create_iterable_from_segment.hpp"
+#include "types.hpp"
+
+namespace opossum {
+
+/**
+ * Defines in which order a certain column should be sorted.
+ */
+struct SortColumnDefinition final {
+  SortColumnDefinition(const ColumnID& column, const OrderByMode order_by_mode = OrderByMode::Ascending)
+      : column(column), order_by_mode(order_by_mode) {}
+
+  const ColumnID column;
+  const OrderByMode order_by_mode;
+};
+
+/**
+ * Operator to sort a table by a single column. This implements a stable sort, i.e., rows that share the same value will
+ * maintain their relative order.
+ * By passing multiple sort column definitions it is possible to sort multiple columns with one operator run.
+ */
+class SortNew : public AbstractReadOnlyOperator {
+ public:
+  SortNew(const std::shared_ptr<const AbstractOperator>& in, const std::vector<SortColumnDefinition>& sort_definitions,
+          size_t output_chunk_size = Chunk::DEFAULT_SIZE);
+
+  SortNew(const std::shared_ptr<const AbstractOperator>& in, ColumnID column_id,
+          OrderByMode order_by_mode = OrderByMode::Ascending, size_t output_chunk_size = Chunk::DEFAULT_SIZE);
+
+  const std::vector<SortColumnDefinition>& sort_definitions() const;
+
+  const std::string& name() const override;
+
+ protected:
+  std::shared_ptr<const Table> _on_execute() override;
+  void _on_cleanup() override;
+  std::shared_ptr<AbstractOperator> _on_deep_copy(
+      const std::shared_ptr<AbstractOperator>& copied_input_left,
+      const std::shared_ptr<AbstractOperator>& copied_input_right) const override;
+  void _on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) override;
+
+  template <typename SortColumnType>
+  class SortNewImpl;
+
+  std::shared_ptr<const Table> _get_materialized_output(const std::shared_ptr<PosList>& pos_list = nullptr);
+
+  void _validate_sort_definitions() const;
+
+  const std::vector<SortColumnDefinition> _sort_definitions;
+  std::vector<DataType> _sort_definition_data_types;
+
+  const size_t _output_chunk_size;
+};
+
+}  // namespace opossum

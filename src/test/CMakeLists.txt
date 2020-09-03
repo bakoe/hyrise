@@ -98,6 +98,7 @@ set(
     operators/product_test.cpp
     operators/projection_test.cpp
     operators/sort_test.cpp
+    operators/sort_new_test.cpp
     operators/table_scan_between_test.cpp
     operators/table_scan_sorted_segment_search_test.cpp
     operators/table_scan_string_test.cpp
