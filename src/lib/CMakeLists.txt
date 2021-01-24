@@ -571,7 +571,6 @@ set(
     utils/plugin_manager.cpp
     utils/plugin_manager.hpp
     utils/print_directed_acyclic_graph.hpp
-    utils/scoped_locking_ptr.hpp
     utils/singleton.hpp
     utils/sqlite_add_indices.cpp
     utils/sqlite_add_indices.hpp
@@ -584,6 +583,8 @@ set(
     utils/timer.cpp
     utils/timer.hpp
     utils/tracing/probes.hpp
+    utils/pos_list_utils.cpp
+    utils/pos_list_utils.hpp
     visualization/abstract_visualizer.hpp
     visualization/join_graph_visualizer.cpp
     visualization/join_graph_visualizer.hpp
